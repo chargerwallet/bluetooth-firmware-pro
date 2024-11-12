@@ -1,0 +1,74 @@
+name: "Build Factory and OTA Images"
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: "build"
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check out repository code
+        uses: actions/checkout@v3
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt -y install curl wget cmake ninja-build build-essential libtool
+          # sudo apt -y install gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt -y install python3 python-is-python3 python3-pip python3-poetry
+
+          # Note:
+          # currently poetry is not being used in CI since ubuntu-latest(22.04) poetry is too old
+          # may consider switch to poetry when ubuntu-latest pointing to 24.04
+
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            wget https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-arm-none-eabi.tar.xz --progress=dot:giga
+            mkdir gcc-arm-none-eabi-12.2.rel1
+            tar -xf arm-gnu-toolchain-12.2.rel1-x86_64-arm-none-eabi.tar.xz --strip-components=1 -C gcc-arm-none-eabi-12.2.rel1 --totals
+          else
+            wget https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-aarch64-arm-none-eabi.tar.xz --progress=dot:giga
+            mkdir gcc-arm-none-eabi-12.2.rel1
+            tar -xf arm-gnu-toolchain-12.2.rel1-aarch64-arm-none-eabi.tar.xz --strip-components=1 -C gcc-arm-none-eabi-12.2.rel1 --totals
+          fi
+
+      - name: Populate vars
+        id: vars
+        run: |
+          echo "build_date=$(date +"%Y%m%d")" >> $GITHUB_OUTPUT
+          echo "short_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "fw_revision=$(sed -n 's/^#define FW_REVISION\s*"\(.*\)"/\1/p' app/firmware_config.h)" >> $GITHUB_OUTPUT
+          echo "artifacts_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"" >> $GITHUB_OUTPUT
+
+      - name: Build and Sign
+        env:
+          BT_SIG_PK: ${{ secrets.BT_SIG_PK }}
+          TOOL_CHAIN_PREFIX: "${{ github.workspace }}/gcc-arm-none-eabi-12.2.rel1/bin/arm-none-eabi"
+          # TOOL_CHAIN_PREFIX: "arm-none-eabi"
+        run: |
+          ./build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: "${{ github.event.repository.name }}-${{ steps.vars.outputs.fw_revision }}-${{ steps.vars.outputs.build_date }}-${{ steps.vars.outputs.short_hash }}"
+          path: |
+            artifacts/*
+            artifacts_signed/*
+
+      - name: Notify to Slack
+        uses: chargerwallet/actions/notice-slack-app-update@main
+        with:
+          web-hook-url: ${{ secrets.SLACK_DEV_RELEASE_WEBHOOK }}
+          artifact-type: PRO-FIRMWARE-BT
+          artifact-name: Pro-Hardware-Firmware-BT
+          artifact-bundle-id: "com.chargerwallet.firmware.pro.bt"
+          artifact-version-name: "${{ steps.vars.outputs.fw_revision }}"
+          artifact-version-code: "${{ steps.vars.outputs.short_hash }}"
+          artifact-download-url: "${{ steps.vars.outputs.artifacts_url }}"
+          change-log: "Download [Artifacts] at the bottom of page."
+          custom-issue-url: ""
+          custom-message-title: ""
+          custom-message-payload: ""
+          filter-code: false

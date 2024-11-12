@@ -1,0 +1,14 @@
+# vscode related
+.vscode
+.build
+.install
+# artifacts
+build
+_build
+artifacts*
+# secrets
+temp.pk
+build_local_signed.sh
+# garbages
+utils/nrfutil_repo
+*.bak
